@@ -49,3 +49,27 @@ export async function getCredentials(
   if (error || !data) throw new Error('No Intervals.icu credentials for user')
   return data
 }
+
+const STREAM_TYPES = 'time,heartrate,velocity_smooth,altitude,distance,latlng'
+
+export async function getActivities(
+  apiKey: string, athleteId: string, oldest: string, newest: string,
+): Promise<any[]> {
+  const res = await intervalsFetch(apiKey, `/athlete/${athleteId}/activities?oldest=${oldest}&newest=${newest}`)
+  if (!res.ok) throw new Error(`activities fetch failed: ${res.status}`)
+  return await res.json()
+}
+
+export async function getWellness(
+  apiKey: string, athleteId: string, oldest: string, newest: string,
+): Promise<any[]> {
+  const res = await intervalsFetch(apiKey, `/athlete/${athleteId}/wellness?oldest=${oldest}&newest=${newest}`)
+  if (!res.ok) throw new Error(`wellness fetch failed: ${res.status}`)
+  return await res.json()
+}
+
+export async function getStreams(apiKey: string, activityId: string): Promise<any> {
+  const res = await intervalsFetch(apiKey, `/activity/${activityId}/streams?types=${STREAM_TYPES}`)
+  if (!res.ok) throw new Error(`streams fetch failed: ${res.status}`)
+  return await res.json()
+}
