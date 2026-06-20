@@ -22,7 +22,9 @@ Deno.serve(async (req) => {
   }
 
   const res = await intervalsFetch(creds.api_key, `/athlete/${creds.athlete_id}`)
-  if (!res.ok) return new Response(`Intervals.icu error: ${res.status}`, { status: 502 })
+  if (!res.ok) return new Response(JSON.stringify({ connected: false, error: 'Upstream error' }), {
+    status: 502, headers: { 'Content-Type': 'application/json' },
+  })
   const athlete = await res.json()
   return new Response(JSON.stringify({ connected: true, athlete }), {
     headers: { 'Content-Type': 'application/json' },

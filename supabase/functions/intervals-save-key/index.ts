@@ -11,7 +11,15 @@ Deno.serve(async (req) => {
   const { data: { user } } = await userClient.auth.getUser()
   if (!user) return new Response('Unauthorized', { status: 401 })
 
-  const { apiKey, athleteId } = await req.json()
+  let body: { apiKey?: string; athleteId?: string }
+  try {
+    body = await req.json()
+  } catch {
+    return new Response(JSON.stringify({ ok: false, error: 'Invalid JSON' }), {
+      status: 400, headers: { 'Content-Type': 'application/json' },
+    })
+  }
+  const { apiKey, athleteId } = body
   if (!apiKey || !athleteId) {
     return new Response(JSON.stringify({ ok: false, error: 'Missing apiKey or athleteId' }), {
       status: 400, headers: { 'Content-Type': 'application/json' },
@@ -34,7 +42,9 @@ Deno.serve(async (req) => {
     athlete_id: String(athleteId),
     updated_at: new Date().toISOString(),
   })
-  if (error) return new Response(`Save failed: ${error.message}`, { status: 500 })
+  if (error) return new Response(JSON.stringify({ ok: false, error: 'Save failed' }), {
+    status: 500, headers: { 'Content-Type': 'application/json' },
+  })
 
   return new Response(JSON.stringify({ ok: true, athlete }), {
     headers: { 'Content-Type': 'application/json' },
