@@ -16,3 +16,16 @@ test('redirects to /login when no session', () => {
   )
   expect(screen.getByText('Login Page')).toBeInTheDocument()
 })
+
+test('shows loading while session is resolving', () => {
+  vi.spyOn(sessionMod, 'useSession').mockReturnValue({ session: null, loading: true })
+  render(
+    <MemoryRouter initialEntries={['/secret']}>
+      <Routes>
+        <Route path="/login" element={<div>Login Page</div>} />
+        <Route path="/secret" element={<RequireAuth><div>Secret</div></RequireAuth>} />
+      </Routes>
+    </MemoryRouter>,
+  )
+  expect(screen.getByText(/Loading/i)).toBeInTheDocument()
+})
