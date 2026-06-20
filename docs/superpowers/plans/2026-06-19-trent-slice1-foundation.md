@@ -1,10 +1,13 @@
-# Trent Slice 1 (Foundation & Strava Connection) Implementation Plan
+# Trent Slice 1 (Foundation & Intervals.icu Connection) Implementation Plan
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Stand up the Trent PWA with Supabase magic-link auth and a working, server-side Strava OAuth connection whose tokens refresh lazily.
+> **Revised 2026-06-21:** Data source switched from Strava (OAuth) to Intervals.icu
+> (API key). Tasks 1, 2, and 4 are unchanged; Tasks 3, 5, 6, 7, and 8 are rewritten.
 
-**Architecture:** Single-repo Vite/React PWA hosted on Vercel; Supabase provides Postgres, magic-link Auth, and Deno Edge Functions. Strava OAuth runs through a stable Edge Function callback using a server-side nonce in the `state` param, so one registered Strava app works for both localhost and prod. Strava tokens live in a Supabase table (never the browser) and are refreshed on demand by a shared helper.
+**Goal:** Stand up the Trent PWA with Supabase magic-link app-login and a working, server-side Intervals.icu connection authenticated by a stored API key.
+
+**Architecture:** Single-repo Vite/React PWA hosted on Vercel; Supabase provides Postgres, magic-link Auth, and Deno Edge Functions. The Intervals.icu API key + athlete ID live in a Supabase table (never the browser); all Intervals.icu calls go through Edge Functions that read the key via the service role and use HTTP Basic auth.
 
 **Tech Stack:** React 18, Vite, react-router-dom v6, @supabase/supabase-js v2, vite-plugin-pwa, chart.js (installed, unused this slice), Supabase Edge Functions (Deno/TypeScript), Vercel.
 
@@ -12,11 +15,10 @@
 
 - App name in UI/header, `package.json`, README, PWA manifest `name`, and `index.html` `<title>`: manifest `name` = "Trent — The Training Dashboard", `short_name` = "Trent"; page title = "Trent".
 - Single user only: public signups disabled, one pre-provisioned user. No multi-user code paths.
-- Strava tokens stored server-side in Supabase only — never in `localStorage`/browser storage.
-- Strava OAuth scope: `read,activity:read_all`.
-- One registered Strava app; callback domain = the Supabase Edge Functions domain.
-- Token refresh is lazy (refresh when `expires_at` is within a 60s buffer), via the shared `getValidStravaToken` helper — no cron.
-- Frontend secrets limited to `VITE_SUPABASE_URL`, `VITE_SUPABASE_ANON_KEY`. Strava client secret and service-role key live only in Edge Function secrets.
+- The Intervals.icu API key is stored server-side in Supabase only — never in `localStorage`/browser storage, and never returned to the browser in any API response.
+- Intervals.icu auth: HTTP Basic, username literal `API_KEY`, password = the user's key. Base URL `https://intervals.icu/api/v1`.
+- All Intervals.icu calls go through Edge Functions; the browser never holds the key.
+- Frontend secrets limited to `VITE_SUPABASE_URL`, `VITE_SUPABASE_ANON_KEY`. The service-role key lives only in Edge Function env. There is no app-level Intervals.icu secret (the key is per-user data).
 - Slice 1 scope only: nav routes other than `/login` and `/settings` are stubs.
 
 ---
@@ -189,73 +191,64 @@ git commit -m "feat: add installable PWA manifest and service worker"
 
 ---
 
-### Task 3: Supabase init and database migrations
+### Task 3: Supabase init and database migration (REVISED for Intervals.icu)
 
 **Files:**
-- Create: `supabase/config.toml` (via CLI), `supabase/migrations/0001_strava_tokens.sql`, `supabase/migrations/0002_oauth_state.sql`
+- Create: `supabase/config.toml` (via CLI), `supabase/migrations/0001_intervals_credentials.sql`
+- Delete: any previously-created `supabase/migrations/0001_strava_tokens.sql` and `supabase/migrations/0002_oauth_state.sql` (obsolete Strava tables; never applied)
 
 **Interfaces:**
-- Produces: tables `strava_tokens` and `oauth_state` with RLS; consumed by Edge Functions in Task 5 (service role) and the frontend session in Task 4.
+- Produces: table `intervals_credentials` with RLS; consumed by Edge Functions in Tasks 5–6 (service role). The frontend never reads it directly.
 
-- [ ] **Step 1: Init Supabase locally**
+> **Note:** an earlier run committed `0001_strava_tokens.sql` and `0002_oauth_state.sql`.
+> Remove both and replace with the single migration below. Migrations were never applied
+> to any database, so no drop-migration is needed.
+
+- [ ] **Step 1: Ensure Supabase is initialised**
 
 ```bash
-supabase init
+supabase init   # skip if supabase/config.toml already exists
 ```
 
-- [ ] **Step 2: Write strava_tokens migration**
+- [ ] **Step 2: Remove obsolete Strava migrations**
 
-Create `supabase/migrations/0001_strava_tokens.sql`:
+```bash
+git rm -f supabase/migrations/0001_strava_tokens.sql supabase/migrations/0002_oauth_state.sql
+```
+
+- [ ] **Step 3: Write the intervals_credentials migration**
+
+Create `supabase/migrations/0001_intervals_credentials.sql`:
 
 ```sql
-create table public.strava_tokens (
+create table public.intervals_credentials (
   user_id uuid primary key references auth.users(id) on delete cascade,
-  access_token text not null,
-  refresh_token text not null,
-  expires_at timestamptz not null,
-  athlete_id bigint,
-  scope text,
+  api_key text not null,
+  athlete_id text not null,
   updated_at timestamptz not null default now()
 );
 
-alter table public.strava_tokens enable row level security;
-
-create policy "owner reads own tokens"
-  on public.strava_tokens for select
-  using (auth.uid() = user_id);
--- writes happen only via Edge Functions using the service role, which bypasses RLS.
+alter table public.intervals_credentials enable row level security;
+-- No policies: only the service role (Edge Functions) may read/write.
+-- This keeps the api_key unreadable by the browser; connection status is
+-- returned by an Edge Function, not by a client SELECT.
 ```
 
-- [ ] **Step 3: Write oauth_state migration**
+- [ ] **Step 4: Apply migration (DEFERRED if no Docker/linked project)**
 
-Create `supabase/migrations/0002_oauth_state.sql`:
+Run: `supabase db push` (against the linked project) or `supabase start` + `supabase db reset` locally.
+Expected: `intervals_credentials` created; `supabase db lint` reports no errors.
+If neither Docker nor a linked project is available this session, skip applying and note it as deferred in the report.
 
-```sql
-create table public.oauth_state (
-  nonce text primary key,
-  user_id uuid not null references auth.users(id) on delete cascade,
-  frontend_origin text not null,
-  expires_at timestamptz not null
-);
+- [ ] **Step 5: Document deferred manual setup and fix the README intro**
 
-alter table public.oauth_state enable row level security;
--- no policies: only the service role (Edge Functions) may read/write.
-```
-
-- [ ] **Step 4: Apply migrations**
-
-Run: `supabase db push` (against the linked project) or `supabase start` + `supabase db reset` for local.
-Expected: both tables created; `supabase db lint` reports no errors.
-
-- [ ] **Step 5: Disable signups and pre-provision the user**
-
-In the Supabase dashboard: Authentication → Providers/Settings → disable new signups. Authentication → Users → "Add user" with your single allowed email (send magic link or set as confirmed). Document this in `README.md` under a "Supabase setup" note.
+Update `README.md`: (a) fix the intro line that still says "pulls Strava data (synced from a COROS Pace 4)" → "pulls Intervals.icu data (COROS Pace 4 → Intervals.icu)"; (b) under "## Supabase setup (manual, later)" list: link project (`supabase link`), apply migrations (`supabase db push`), disable public signups in the dashboard, and add the single allowed user via Authentication → Users.
 
 - [ ] **Step 6: Commit**
 
 ```bash
 git add -A
-git commit -m "feat: add strava_tokens and oauth_state tables with RLS"
+git commit -m "feat: replace Strava tables with intervals_credentials migration"
 ```
 
 ---
@@ -509,50 +502,58 @@ git commit -m "feat: magic-link auth, app shell, protected routes, and stubs"
 
 ---
 
-### Task 5: Shared Strava helper with lazy refresh
+### Task 5: Shared Intervals.icu helper (REVISED)
 
 **Files:**
-- Create: `supabase/functions/_shared/strava.ts`
-- Test: `supabase/functions/_shared/strava.test.ts`
+- Create: `supabase/functions/_shared/intervals.ts`
+- Test: `supabase/functions/_shared/intervals.test.ts`
 
 **Interfaces:**
-- Produces: `getValidStravaToken(admin, userId): Promise<string>` — returns a non-expired access token, refreshing and persisting if `expires_at` is within 60s. Consumed by Tasks 6 (callback, athlete) and all future sync functions. `admin` is a service-role Supabase client.
+- Produces:
+  - `basicAuthHeader(apiKey): string` — returns `Basic <base64("API_KEY:" + apiKey)>`.
+  - `intervalsFetch(apiKey, path): Promise<Response>` — GET `https://intervals.icu/api/v1{path}` with the Basic auth header.
+  - `adminClient(): SupabaseClient` — service-role Supabase client.
+  - `getCredentials(admin, userId): Promise<{ api_key, athlete_id }>` — throws if none.
+- Consumed by Task 6 (`intervals-save-key`, `intervals-athlete`) and all future sync functions.
 
 - [ ] **Step 1: Write the failing test (Deno)**
 
-Create `supabase/functions/_shared/strava.test.ts`:
+Create `supabase/functions/_shared/intervals.test.ts`:
 
 ```ts
 import { assertEquals } from 'https://deno.land/std@0.224.0/assert/mod.ts'
-import { needsRefresh } from './strava.ts'
+import { basicAuthHeader } from './intervals.ts'
 
-Deno.test('needsRefresh true when within 60s buffer', () => {
-  const soon = new Date(Date.now() + 30_000).toISOString()
-  assertEquals(needsRefresh(soon), true)
-})
-
-Deno.test('needsRefresh false when comfortably in the future', () => {
-  const later = new Date(Date.now() + 3_600_000).toISOString()
-  assertEquals(needsRefresh(later), false)
+Deno.test('basicAuthHeader uses API_KEY username and base64-encodes the key', () => {
+  // base64("API_KEY:secret") === "QVBJX0tFWTpzZWNyZXQ="
+  assertEquals(basicAuthHeader('secret'), 'Basic QVBJX0tFWTpzZWNyZXQ=')
 })
 ```
 
 - [ ] **Step 2: Run test to verify it fails**
 
-Run: `deno test supabase/functions/_shared/strava.test.ts`
-Expected: FAIL ("Module not found" / `needsRefresh` not exported).
+Run: `deno test supabase/functions/_shared/intervals.test.ts`
+Expected: FAIL ("Module not found" / `basicAuthHeader` not exported).
 
 - [ ] **Step 3: Implement the helper**
 
-Create `supabase/functions/_shared/strava.ts`:
+Create `supabase/functions/_shared/intervals.ts`:
 
 ```ts
 import { createClient, SupabaseClient } from 'https://esm.sh/@supabase/supabase-js@2'
 
-const BUFFER_MS = 60_000
+const BASE_URL = 'https://intervals.icu/api/v1'
 
-export function needsRefresh(expiresAt: string): boolean {
-  return new Date(expiresAt).getTime() - Date.now() <= BUFFER_MS
+export function basicAuthHeader(apiKey: string): string {
+  // Intervals.icu uses HTTP Basic auth: username is the literal "API_KEY",
+  // password is the user's key.
+  return `Basic ${btoa(`API_KEY:${apiKey}`)}`
+}
+
+export function intervalsFetch(apiKey: string, path: string): Promise<Response> {
+  return fetch(`${BASE_URL}${path}`, {
+    headers: { Authorization: basicAuthHeader(apiKey) },
+  })
 }
 
 export function adminClient(): SupabaseClient {
@@ -562,73 +563,56 @@ export function adminClient(): SupabaseClient {
   )
 }
 
-export async function getValidStravaToken(
+export async function getCredentials(
   admin: SupabaseClient,
   userId: string,
-): Promise<string> {
+): Promise<{ api_key: string; athlete_id: string }> {
   const { data, error } = await admin
-    .from('strava_tokens')
-    .select('access_token, refresh_token, expires_at')
+    .from('intervals_credentials')
+    .select('api_key, athlete_id')
     .eq('user_id', userId)
     .single()
-  if (error || !data) throw new Error('No Strava tokens for user')
-
-  if (!needsRefresh(data.expires_at)) return data.access_token
-
-  const res = await fetch('https://www.strava.com/oauth/token', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      client_id: Deno.env.get('STRAVA_CLIENT_ID'),
-      client_secret: Deno.env.get('STRAVA_CLIENT_SECRET'),
-      grant_type: 'refresh_token',
-      refresh_token: data.refresh_token,
-    }),
-  })
-  if (!res.ok) throw new Error(`Strava refresh failed: ${res.status}`)
-  const t = await res.json()
-
-  await admin.from('strava_tokens').update({
-    access_token: t.access_token,
-    refresh_token: t.refresh_token,
-    expires_at: new Date(t.expires_at * 1000).toISOString(),
-    updated_at: new Date().toISOString(),
-  }).eq('user_id', userId)
-
-  return t.access_token
+  if (error || !data) throw new Error('No Intervals.icu credentials for user')
+  return data
 }
 ```
 
 - [ ] **Step 4: Run test to verify it passes**
 
-Run: `deno test supabase/functions/_shared/strava.test.ts`
+Run: `deno test supabase/functions/_shared/intervals.test.ts`
 Expected: PASS.
 
 - [ ] **Step 5: Commit**
 
 ```bash
 git add -A
-git commit -m "feat: shared Strava token helper with lazy refresh"
+git commit -m "feat: shared Intervals.icu fetch helper (Basic auth)"
 ```
 
 ---
 
-### Task 6: Strava OAuth Edge Functions
+### Task 6: Intervals.icu Edge Functions (REVISED)
 
 **Files:**
-- Create: `supabase/functions/strava-oauth-start/index.ts`, `supabase/functions/strava-oauth-callback/index.ts`, `supabase/functions/strava-athlete/index.ts`
+- Create: `supabase/functions/intervals-save-key/index.ts`, `supabase/functions/intervals-athlete/index.ts`
 
 **Interfaces:**
-- Consumes: `getValidStravaToken`, `adminClient` from Task 5; `oauth_state` and `strava_tokens` tables from Task 3.
-- Produces: HTTP endpoints. `strava-oauth-start` (authed POST) returns `{ url }`. `strava-oauth-callback` (public GET) 302-redirects to `<origin>/settings?strava=connected`. `strava-athlete` (authed GET) returns the Strava `/athlete` JSON, or `{ connected: false }` when no tokens exist.
+- Consumes: `intervalsFetch`, `adminClient`, `getCredentials` from Task 5; `intervals_credentials` table from Task 3.
+- Produces: HTTP endpoints.
+  - `intervals-save-key` (authed POST, body `{ apiKey, athleteId }`): validates the key by calling `GET /athlete/{athleteId}`; on success upserts credentials and returns `{ ok: true, athlete }`; on a bad key returns `{ ok: false }` with a 400 and saves nothing.
+  - `intervals-athlete` (authed GET): returns `{ connected: true, athlete }`, or `{ connected: false }` when no credentials exist.
 
-- [ ] **Step 1: Implement strava-oauth-start**
+> **Auth note:** both functions resolve the user from the caller's Supabase JWT via an
+> anon client carrying the `Authorization` header. The api_key is read/written only by
+> the service-role `adminClient` and is never sent back to the browser.
 
-Create `supabase/functions/strava-oauth-start/index.ts`:
+- [ ] **Step 1: Implement intervals-save-key**
+
+Create `supabase/functions/intervals-save-key/index.ts`:
 
 ```ts
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
-import { adminClient } from '../_shared/strava.ts'
+import { adminClient, intervalsFetch } from '../_shared/intervals.ts'
 
 Deno.serve(async (req) => {
   const authHeader = req.headers.get('Authorization') ?? ''
@@ -640,89 +624,44 @@ Deno.serve(async (req) => {
   const { data: { user } } = await userClient.auth.getUser()
   if (!user) return new Response('Unauthorized', { status: 401 })
 
-  const { origin } = await req.json() // frontend origin to return to
-  const nonce = crypto.randomUUID()
-  const admin = adminClient()
-  await admin.from('oauth_state').insert({
-    nonce,
-    user_id: user.id,
-    frontend_origin: origin,
-    expires_at: new Date(Date.now() + 10 * 60_000).toISOString(),
-  })
-
-  const redirectUri = `${Deno.env.get('SUPABASE_URL')}/functions/v1/strava-oauth-callback`
-  const url = new URL('https://www.strava.com/oauth/authorize')
-  url.searchParams.set('client_id', Deno.env.get('STRAVA_CLIENT_ID')!)
-  url.searchParams.set('redirect_uri', redirectUri)
-  url.searchParams.set('response_type', 'code')
-  url.searchParams.set('scope', 'read,activity:read_all')
-  url.searchParams.set('approval_prompt', 'auto')
-  url.searchParams.set('state', nonce)
-
-  return new Response(JSON.stringify({ url: url.toString() }), {
-    headers: { 'Content-Type': 'application/json' },
-  })
-})
-```
-
-- [ ] **Step 2: Implement strava-oauth-callback**
-
-Create `supabase/functions/strava-oauth-callback/index.ts`:
-
-```ts
-import { adminClient } from '../_shared/strava.ts'
-
-Deno.serve(async (req) => {
-  const url = new URL(req.url)
-  const code = url.searchParams.get('code')
-  const nonce = url.searchParams.get('state')
-  if (!code || !nonce) return new Response('Missing code/state', { status: 400 })
-
-  const admin = adminClient()
-  const { data: state } = await admin
-    .from('oauth_state').select('*').eq('nonce', nonce).single()
-  if (!state || new Date(state.expires_at) < new Date()) {
-    return new Response('Invalid or expired state', { status: 400 })
+  const { apiKey, athleteId } = await req.json()
+  if (!apiKey || !athleteId) {
+    return new Response(JSON.stringify({ ok: false, error: 'Missing apiKey or athleteId' }), {
+      status: 400, headers: { 'Content-Type': 'application/json' },
+    })
   }
-  await admin.from('oauth_state').delete().eq('nonce', nonce)
 
-  const res = await fetch('https://www.strava.com/oauth/token', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      client_id: Deno.env.get('STRAVA_CLIENT_ID'),
-      client_secret: Deno.env.get('STRAVA_CLIENT_SECRET'),
-      code,
-      grant_type: 'authorization_code',
-    }),
-  })
-  if (!res.ok) return new Response(`Token exchange failed: ${res.status}`, { status: 502 })
-  const t = await res.json()
+  // Validate the credentials before persisting.
+  const probe = await intervalsFetch(apiKey, `/athlete/${athleteId}`)
+  if (!probe.ok) {
+    return new Response(JSON.stringify({ ok: false, error: 'Invalid API key or athlete ID' }), {
+      status: 400, headers: { 'Content-Type': 'application/json' },
+    })
+  }
+  const athlete = await probe.json()
 
-  await admin.from('strava_tokens').upsert({
-    user_id: state.user_id,
-    access_token: t.access_token,
-    refresh_token: t.refresh_token,
-    expires_at: new Date(t.expires_at * 1000).toISOString(),
-    athlete_id: t.athlete?.id ?? null,
-    scope: 'read,activity:read_all',
+  const admin = adminClient()
+  const { error } = await admin.from('intervals_credentials').upsert({
+    user_id: user.id,
+    api_key: apiKey,
+    athlete_id: String(athleteId),
     updated_at: new Date().toISOString(),
   })
+  if (error) return new Response(`Save failed: ${error.message}`, { status: 500 })
 
-  return new Response(null, {
-    status: 302,
-    headers: { Location: `${state.frontend_origin}/settings?strava=connected` },
+  return new Response(JSON.stringify({ ok: true, athlete }), {
+    headers: { 'Content-Type': 'application/json' },
   })
 })
 ```
 
-- [ ] **Step 3: Implement strava-athlete**
+- [ ] **Step 2: Implement intervals-athlete**
 
-Create `supabase/functions/strava-athlete/index.ts`:
+Create `supabase/functions/intervals-athlete/index.ts`:
 
 ```ts
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
-import { adminClient, getValidStravaToken } from '../_shared/strava.ts'
+import { adminClient, getCredentials, intervalsFetch } from '../_shared/intervals.ts'
 
 Deno.serve(async (req) => {
   const authHeader = req.headers.get('Authorization') ?? ''
@@ -735,19 +674,17 @@ Deno.serve(async (req) => {
   if (!user) return new Response('Unauthorized', { status: 401 })
 
   const admin = adminClient()
-  let token: string
+  let creds: { api_key: string; athlete_id: string }
   try {
-    token = await getValidStravaToken(admin, user.id)
+    creds = await getCredentials(admin, user.id)
   } catch {
     return new Response(JSON.stringify({ connected: false }), {
       headers: { 'Content-Type': 'application/json' },
     })
   }
 
-  const res = await fetch('https://www.strava.com/api/v3/athlete', {
-    headers: { Authorization: `Bearer ${token}` },
-  })
-  if (!res.ok) return new Response(`Strava error: ${res.status}`, { status: 502 })
+  const res = await intervalsFetch(creds.api_key, `/athlete/${creds.athlete_id}`)
+  if (!res.ok) return new Response(`Intervals.icu error: ${res.status}`, { status: 502 })
   const athlete = await res.json()
   return new Response(JSON.stringify({ connected: true, athlete }), {
     headers: { 'Content-Type': 'application/json' },
@@ -755,25 +692,27 @@ Deno.serve(async (req) => {
 })
 ```
 
-- [ ] **Step 4: Set function secrets and deploy locally**
+- [ ] **Step 3: Serve locally (requires Docker/linked project — DEFER if unavailable)**
 
 ```bash
-supabase secrets set STRAVA_CLIENT_ID=... STRAVA_CLIENT_SECRET=...
-supabase functions serve
+supabase functions serve --env-file supabase/functions/.env.local
 ```
 
-Note: `SUPABASE_URL`, `SUPABASE_ANON_KEY`, and `SUPABASE_SERVICE_ROLE_KEY` are injected automatically into deployed functions; for `supabase functions serve` provide them via `--env-file`.
+The functions need `SUPABASE_URL`, `SUPABASE_ANON_KEY`, `SUPABASE_SERVICE_ROLE_KEY`
+(auto-injected when deployed; provide via `--env-file` for local serve). No Intervals.icu
+secret is needed — the key is supplied per-request/per-user.
 
-- [ ] **Step 5: Smoke-test start endpoint**
+- [ ] **Step 4: Smoke-test (when a project is available)**
 
-Run (with a valid user JWT): `curl -X POST -H "Authorization: Bearer <jwt>" -H "Content-Type: application/json" -d '{"origin":"http://localhost:5173"}' http://localhost:54321/functions/v1/strava-oauth-start`
-Expected: JSON `{ "url": "https://www.strava.com/oauth/authorize?...state=..." }`; an `oauth_state` row exists.
+With a valid user JWT:
+`curl -X POST -H "Authorization: Bearer <jwt>" -H "Content-Type: application/json" -d '{"apiKey":"<key>","athleteId":"<id>"}' http://localhost:54321/functions/v1/intervals-save-key`
+Expected: `{ "ok": true, "athlete": { ... } }`; an `intervals_credentials` row exists; a bad key returns `{ "ok": false }` with status 400.
 
-- [ ] **Step 6: Commit**
+- [ ] **Step 5: Commit**
 
 ```bash
 git add -A
-git commit -m "feat: Strava OAuth start/callback and athlete edge functions"
+git commit -m "feat: intervals-save-key and intervals-athlete edge functions"
 ```
 
 ---
@@ -785,8 +724,8 @@ git commit -m "feat: Strava OAuth start/callback and athlete edge functions"
 - Test: `src/pages/Settings.test.jsx`
 
 **Interfaces:**
-- Consumes: `supabase` client; the three Edge Functions from Task 6.
-- Produces: Settings UI showing connection status and a Connect/Reconnect button.
+- Consumes: `supabase` client; the `intervals-save-key` and `intervals-athlete` Edge Functions from Task 6.
+- Produces: Settings UI showing Intervals.icu connection status and an API key + athlete ID form (Connect/Reconnect).
 
 - [ ] **Step 1: Add a function-invocation helper**
 
@@ -812,11 +751,13 @@ import { vi } from 'vitest'
 import Settings from './Settings'
 import * as fns from '../lib/functions'
 
-test('shows Not connected when athlete fn reports disconnected', async () => {
+test('shows Not connected and the key form when no credentials are stored', async () => {
   vi.spyOn(fns, 'invokeFn').mockResolvedValue({ connected: false })
   render(<Settings />)
   await waitFor(() => expect(screen.getByText(/Not connected/i)).toBeInTheDocument())
-  expect(screen.getByRole('button', { name: /Connect Strava/i })).toBeInTheDocument()
+  expect(screen.getByLabelText(/API key/i)).toBeInTheDocument()
+  expect(screen.getByLabelText(/Athlete ID/i)).toBeInTheDocument()
+  expect(screen.getByRole('button', { name: /Connect Intervals\.icu/i })).toBeInTheDocument()
 })
 ```
 
@@ -835,16 +776,33 @@ import { invokeFn } from '../lib/functions'
 
 export default function Settings() {
   const [status, setStatus] = useState({ loading: true })
+  const [apiKey, setApiKey] = useState('')
+  const [athleteId, setAthleteId] = useState('')
+  const [saving, setSaving] = useState(false)
+  const [error, setError] = useState(null)
 
-  useEffect(() => {
-    invokeFn('strava-athlete')
+  function loadStatus() {
+    invokeFn('intervals-athlete')
       .then((d) => setStatus({ loading: false, ...d }))
       .catch(() => setStatus({ loading: false, connected: false }))
-  }, [])
+  }
 
-  async function connect() {
-    const { url } = await invokeFn('strava-oauth-start', { origin: window.location.origin })
-    window.location.href = url
+  useEffect(loadStatus, [])
+
+  async function save(e) {
+    e.preventDefault()
+    setSaving(true)
+    setError(null)
+    try {
+      const res = await invokeFn('intervals-save-key', { apiKey, athleteId })
+      if (!res.ok) throw new Error(res.error || 'Could not validate credentials')
+      setApiKey('')
+      setStatus({ loading: false, connected: true, athlete: res.athlete })
+    } catch (err) {
+      setError(err.message)
+    } finally {
+      setSaving(false)
+    }
   }
 
   if (status.loading) return <main><h2>Settings</h2><p>Loading…</p></main>
@@ -853,20 +811,24 @@ export default function Settings() {
     <main>
       <h2>Settings</h2>
       <section>
-        <h3>Strava</h3>
+        <h3>Intervals.icu</h3>
         {status.connected ? (
-          <p>
-            Connected as {status.athlete?.firstname} {status.athlete?.lastname}
-            {status.athlete?.profile && (
-              <img src={status.athlete.profile} alt="" width={32} height={32} />
-            )}
-          </p>
+          <p>Connected as {status.athlete?.name ?? status.athlete?.id}</p>
         ) : (
           <p>Not connected</p>
         )}
-        <button onClick={connect}>
-          {status.connected ? 'Reconnect Strava' : 'Connect Strava'}
-        </button>
+        <form onSubmit={save}>
+          <label htmlFor="apiKey">API key</label>
+          <input id="apiKey" type="password" value={apiKey} required
+            onChange={(e) => setApiKey(e.target.value)} />
+          <label htmlFor="athleteId">Athlete ID</label>
+          <input id="athleteId" type="text" value={athleteId} required
+            placeholder="i123456" onChange={(e) => setAthleteId(e.target.value)} />
+          <button type="submit" disabled={saving}>
+            {status.connected ? 'Reconnect Intervals.icu' : 'Connect Intervals.icu'}
+          </button>
+          {error && <p role="alert">{error}</p>}
+        </form>
       </section>
     </main>
   )
@@ -882,18 +844,18 @@ Expected: PASS.
 
 ```bash
 git add -A
-git commit -m "feat: Settings page with Strava connect/status"
+git commit -m "feat: Settings page with Intervals.icu key entry and status"
 ```
 
 ---
 
-### Task 8: Deployment and end-to-end verification
+### Task 8: Deployment and end-to-end verification (REVISED)
 
 **Files:**
 - Create: `vercel.json` (SPA rewrite)
 
 **Interfaces:**
-- Produces: live Vercel deployment + deployed Edge Functions + configured Strava app.
+- Produces: live Vercel deployment + deployed Edge Functions. No third-party app config needed (no Strava app).
 
 - [ ] **Step 1: Add SPA rewrite for client routing**
 
@@ -910,26 +872,24 @@ Create `vercel.json`:
 ```bash
 supabase link --project-ref <ref>
 supabase db push
-supabase functions deploy strava-oauth-start strava-oauth-callback strava-athlete
-supabase secrets set STRAVA_CLIENT_ID=... STRAVA_CLIENT_SECRET=...
+supabase functions deploy intervals-save-key intervals-athlete
 ```
 
-- [ ] **Step 3: Configure Strava app**
+No `supabase secrets set` is required for the data source — the Intervals.icu API key is
+per-user data stored in the DB, not an app secret.
 
-In the Strava API settings, set "Authorization Callback Domain" to the Supabase functions host (e.g. `<ref>.supabase.co`).
+- [ ] **Step 3: Deploy frontend**
 
-- [ ] **Step 4: Deploy frontend**
+Create the Vercel project from the repo; set env `VITE_SUPABASE_URL`, `VITE_SUPABASE_ANON_KEY`; deploy. Add the Vercel domain to the Supabase Auth redirect allowlist.
 
-Create the Vercel project from the repo; set env `VITE_SUPABASE_URL`, `VITE_SUPABASE_ANON_KEY`; deploy. Add the Vercel domain to Supabase Auth redirect allowlist.
-
-- [ ] **Step 5: Run acceptance checks**
+- [ ] **Step 4: Run acceptance checks**
 
 1. Magic-link login on laptop and iPhone Safari; a non-provisioned email cannot sign in.
-2. Click Connect Strava → through `strava-oauth-callback` → back to Settings showing "Connected as `<name>`".
-3. In the DB, set `strava_tokens.expires_at` to the past, reload Settings → athlete still loads (refresh path) and the row's `expires_at`/`updated_at` advanced.
+2. In Settings, enter API key + athlete ID → status shows "Connected as `<name>`". A bad key shows an error and saves nothing.
+3. Confirm an `intervals_credentials` row exists and that no browser network response ever contains `api_key`.
 4. Add the PWA to the iPhone home screen; confirm title/manifest read "Trent".
 
-- [ ] **Step 6: Commit and open PR**
+- [ ] **Step 5: Commit and open PR**
 
 ```bash
 git add -A
@@ -939,7 +899,8 @@ git commit -m "chore: Vercel SPA rewrite and deploy config"
 ---
 
 ## Self-Review notes
-- **Spec coverage:** auth lockdown (Task 3 step 5 + Task 4), Edge-Function OAuth with nonce state (Tasks 5–6), server-side tokens + lazy refresh (Task 5), Settings status/connect (Task 7), PWA naming (Tasks 1–2), localhost+prod single Strava app (Task 6 redirect + Task 8 callback domain), acceptance tests (Task 8). All slice-1 spec items map to a task.
-- **Out of scope confirmed absent:** no activity/stream schema, no sync, no analytics — only stub routes.
-- **Type consistency:** `getValidStravaToken(admin, userId)`, `needsRefresh(expiresAt)`, `adminClient()`, `invokeFn(name, body)`, and the `{ connected, athlete }` shape are used identically across Tasks 5–7.
+- **Spec coverage:** app-login lockdown (Task 3 manual note + Task 4), Intervals.icu key stored server-side + never returned to browser (Task 3 RLS + Task 6), connection via Basic-auth helper (Task 5), Settings key-entry/status (Task 7), PWA naming (Tasks 1–2), acceptance tests (Task 8). All slice-1 spec items map to a task.
+- **Out of scope confirmed absent:** no activity/wellness schema, no sync, no analytics, no readiness score — only stub routes.
+- **Type consistency:** `basicAuthHeader(apiKey)`, `intervalsFetch(apiKey, path)`, `adminClient()`, `getCredentials(admin, userId)`, `invokeFn(name, body)`, and the `{ connected, athlete }` / `{ ok, athlete }` shapes are used identically across Tasks 5–7.
 - **Known nit to fix during execution:** in Task 4 Step 9 use a top-level `import { Outlet } from 'react-router-dom'` instead of the inline `require` shim shown in the snippet.
+- **Athlete display:** Intervals.icu athlete object field names are unverified; Settings renders `athlete.name ?? athlete.id`. Confirm the real field against a live response when a key is available.

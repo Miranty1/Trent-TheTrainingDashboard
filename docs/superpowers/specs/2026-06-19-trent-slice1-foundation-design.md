@@ -1,32 +1,39 @@
-# Trent — The Training Dashboard: Slice 1 (Foundation & Strava Connection)
+# Trent — The Training Dashboard: Slice 1 (Foundation & Intervals.icu Connection)
+
+> **Revised 2026-06-21:** Data source switched from Strava (OAuth) to Intervals.icu
+> (API key). Strava began requiring a paid subscription for API access (~June 2026);
+> Intervals.icu has a free REST API and receives COROS data via the official
+> COROS→Intervals.icu sync, so Strava is no longer in the pipeline.
 
 ## Context
 
-`handoff.md` specifies a free, single-user fitness dashboard ("Trent") that pulls
-Strava data (synced from a COROS Pace 4) and renders Premium-style trends, PBs, and
-training-load analytics. It is a greenfield repo (only `handoff.md` + `.git` exist).
+`handoff.md` specifies a free, single-user fitness dashboard ("Trent") that pulls data
+from Intervals.icu (which receives COROS Pace 4 data) and renders Premium-style trends,
+PBs, training-load, and readiness analytics.
 
-The full app is too large for one spec, so it is decomposed into ordered slices:
+The full app is decomposed into ordered slices:
 
-1. **Foundation & Strava connection** ← this spec
-2. Data schema & sync engine (3 sync modes, rate-limit handling, Training Load parsing, best_efforts)
+1. **Foundation & Intervals.icu connection** ← this spec
+2. Data schema & sync engine (activities, streams, wellness; resumable sync; training load from Intervals' computed value)
 3. Core dashboard (Overview + Activity detail + full Settings)
-4. Trends & analytics (PBs, distance-over-time, zone distributions, ATL/CTL/Form, heatmap)
+4. Trends & analytics (PBs, distance-over-time, zone distributions, ATL/CTL/Form from Intervals wellness, Readiness score composite, heatmap)
 5. Gym log
 
-This spec covers **Slice 1 only**: stand up the app + auth + a working, refreshing
-Strava connection. End state: *"I can log in on laptop or iPhone and connect my
-Strava account; tokens live server-side in Supabase and auto-refresh."*
+This spec covers **Slice 1 only**: stand up the app + app-login auth + a working
+Intervals.icu connection. End state: *"I can log in on laptop or iPhone, enter my
+Intervals.icu API key + athlete ID, and see 'Connected as &lt;name&gt;' — with the key
+stored server-side, never exposed to the browser."*
 
-### Decisions locked during brainstorming
-- **OAuth redirect:** Edge Function callback + signed `state` nonce (one registered Strava
-  app/domain works for both localhost and Vercel prod).
-- **Auth lockdown:** disable public signups in Supabase, pre-provision the single user.
-- **Token refresh:** lazy — a shared `getValidStravaToken(user)` helper refreshes only
-  when `expires_at` is near, reused by all future server calls.
+### Decisions locked
+- **Data-source auth:** Intervals.icu API key via HTTP Basic auth (username `API_KEY`,
+  password = the key). No OAuth, no token refresh.
+- **Key stays server-side:** all Intervals.icu calls go through Supabase Edge Functions
+  that read the key from the DB via the service role; the browser never receives it.
+- **Athlete ID:** the user enters both the API key and the athlete ID in Settings.
+- **App login:** Supabase magic link; public signups disabled, single user pre-provisioned.
 
 ## Tech stack
-- React + Vite, `react-router`, `vite-plugin-pwa` (installable PWA)
+- React + Vite, `react-router-dom`, `vite-plugin-pwa` (installable PWA)
 - Chart.js installed but unused until later slices
 - Supabase: Postgres, Auth (magic link), Edge Functions (Deno)
 - Vercel: frontend hosting
@@ -35,64 +42,63 @@ Strava account; tokens live server-side in Supabase and auto-refresh."*
 
 ### Repo layout (single repo)
 - `src/` — Vite React app
-- `supabase/functions/` — Edge Functions (`strava-oauth-start`, `strava-oauth-callback`, `strava-athlete`, shared `_shared/strava.ts`)
+- `supabase/functions/` — Edge Functions (`intervals-save-key`, `intervals-athlete`, shared `_shared/intervals.ts`)
 - `supabase/migrations/` — SQL for tables + RLS
 
-### Auth
+### App auth
 - Magic link; public signups disabled, single user pre-provisioned (Supabase dashboard).
 - Login page (email → magic link), session persisted by supabase-js, protected routes redirect to `/login`.
 
-### Strava OAuth flow
-- **`strava-oauth-start`** (authed): verifies caller's Supabase JWT → user_id; inserts a
-  short-lived `oauth_state` row (`nonce`, `user_id`, `frontend_origin`, `expires_at`);
-  returns the Strava authorize URL (`redirect_uri` = `strava-oauth-callback`,
-  `state` = nonce, `scope` = `read,activity:read_all`).
-- **`strava-oauth-callback`** (public — the one registered Strava callback domain):
-  validates + consumes nonce → user_id + origin; POSTs `code` to Strava token endpoint;
-  upserts `strava_tokens`; 302-redirects to `<frontend_origin>/settings?strava=connected`.
-- **`strava-athlete`** (authed): calls Strava `/athlete` via `getValidStravaToken`; returns
-  profile JSON for the Settings status display (also the acceptance demo for refresh).
+### Intervals.icu connection
+- **`intervals-save-key`** (authed Edge Function): verifies the caller's Supabase JWT →
+  user_id; accepts `{ apiKey, athleteId }`; validates by calling
+  `GET /athlete/{athleteId}` before persisting; on success upserts `intervals_credentials`
+  and returns `{ ok: true, athlete }`; on failure returns a 4xx and saves nothing.
+- **`intervals-athlete`** (authed Edge Function): reads stored credentials, calls
+  `GET /athlete/{athlete_id}` via the shared helper, returns `{ connected: true, athlete }`
+  or `{ connected: false }` when no key is stored. Drives the Settings status display.
 
 ### Data model (migrations)
-- `strava_tokens`: `user_id` (PK, FK `auth.users`), `access_token`, `refresh_token`,
-  `expires_at` (timestamptz), `athlete_id` (bigint), `scope` (text), `updated_at`.
-  RLS: owner + service role only.
-- `oauth_state`: `nonce` (PK, text), `user_id`, `frontend_origin`, `expires_at`.
-  Written/read by Edge Functions via service role; not client-readable.
+- `intervals_credentials`: `user_id` uuid (PK, FK `auth.users` on delete cascade),
+  `api_key` text not null, `athlete_id` text not null, `updated_at` timestamptz default now().
+  **RLS enabled with no client policies** (service-role only): the api_key is never
+  readable by the browser. Connection status comes from an Edge Function, not client SELECT.
 
-### Shared helper `_shared/strava.ts`
-- `getValidStravaToken(supabaseAdmin, userId)`: read `strava_tokens`; if `expires_at`
-  within a buffer (e.g. 60s), POST refresh to Strava, update row, return fresh access token.
+### Shared helper `_shared/intervals.ts`
+- `adminClient()` — service-role Supabase client.
+- `intervalsFetch(apiKey, path)` — GET `https://intervals.icu/api/v1{path}` with
+  `Authorization: Basic base64("API_KEY:" + apiKey)`; returns the `Response`.
+- `getCredentials(admin, userId)` — returns `{ api_key, athlete_id }` or throws.
 
-### Frontend
-- Routes: `/login`, `/` (Overview stub), `/activity/:id` (stub), `/trends` (stub),
-  `/gym` (stub), `/settings`. Auth-guarded nav bar, responsive (laptop + iPhone Safari).
-- Settings page: Strava status ("Connected as `<name>` `<avatar>`" / "Not connected") +
-  Connect / Reconnect button (calls `strava-oauth-start`, redirects to returned URL).
+### Frontend (Slice 1's only real surface beyond login)
+- Settings page: connection status — "Connected as `<name>`" or "Not connected" — and a
+  form with **API key** + **athlete ID** fields. Submitting calls `intervals-save-key`;
+  "Reconnect" is re-entry of the key. Other nav routes are stubs.
 - PWA: manifest `name` "Trent — The Training Dashboard", `short_name` "Trent"; service
   worker via `vite-plugin-pwa`. Page `<title>` = "Trent".
 
 ### Secrets / config
-- Edge Function secrets: `STRAVA_CLIENT_ID`, `STRAVA_CLIENT_SECRET`,
-  `SUPABASE_SERVICE_ROLE_KEY`, `SUPABASE_URL`.
+- Edge Function env: `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`, `SUPABASE_ANON_KEY`
+  (all Supabase-provided). No app-level data-source secret — the Intervals.icu key is
+  per-user data in the DB.
 - Frontend env: `VITE_SUPABASE_URL`, `VITE_SUPABASE_ANON_KEY`.
 
 ## Implementation steps
-
-1. **Scaffold** Vite React app at root; set name "Trent — The Training Dashboard" in `package.json`, `index.html` title, README. Add `react-router`, `chart.js`, `@supabase/supabase-js`, `vite-plugin-pwa`.
-2. **PWA manifest** (name/short_name "Trent") + service worker via `vite-plugin-pwa`.
-3. **Supabase project**: init `supabase/`; migrations for `strava_tokens` + `oauth_state` with RLS. Disable public signups; pre-provision the single user.
+1. **Scaffold** Vite React app; Trent naming in `package.json`, `index.html` title, README. Deps: `react-router-dom`, `chart.js`, `@supabase/supabase-js`, `vite-plugin-pwa`. *(done)*
+2. **PWA manifest** (name/short_name "Trent") + service worker via `vite-plugin-pwa`. *(done)*
+3. **Supabase project**: init `supabase/`; migration for `intervals_credentials` with RLS. Disable public signups; pre-provision the single user.
 4. **Frontend auth**: supabase client, magic-link login page, session context, protected route wrapper, app shell + nav with stub routes.
-5. **Edge Functions**: `_shared/strava.ts` (`getValidStravaToken`), `strava-oauth-start`, `strava-oauth-callback`, `strava-athlete`. Set function secrets.
-6. **Settings page**: connection status via `strava-athlete`; Connect/Reconnect via `strava-oauth-start`; handle `?strava=connected` return.
-7. **Deploy**: Vercel project + env; `supabase functions deploy`; set Strava app callback domain to the Supabase functions domain.
+5. **Shared helper** `_shared/intervals.ts` (`intervalsFetch`, `adminClient`, `getCredentials`).
+6. **Edge Functions**: `intervals-save-key`, `intervals-athlete`. Set function env.
+7. **Settings page**: status via `intervals-athlete`; save via `intervals-save-key` (API key + athlete ID).
+8. **Deploy**: Vercel project + env; `supabase functions deploy`.
 
 ## Verification (acceptance)
-1. Magic-link login succeeds on laptop and iPhone Safari; non-provisioned email cannot sign in.
-2. Connect Strava → routed through `strava-oauth-callback` → back to Settings showing "Connected as `<name>`".
-3. Row present in `strava_tokens`; manually set `expires_at` to the past, reload Settings → athlete still loads (lazy refresh proven, row updated).
+1. Magic-link login succeeds on laptop and iPhone Safari; a non-provisioned email cannot sign in.
+2. Enter API key + athlete ID in Settings → saved → status shows "Connected as `<name>`". A bad key returns an error and saves nothing.
+3. Row present in `intervals_credentials`; confirm no browser network response ever contains `api_key`.
 4. PWA installs on iPhone ("Add to Home Screen"); title/manifest read "Trent".
 
 ## Out of scope for Slice 1 (later slices)
-Activity sync, schema for activities/streams, Training Load parsing, PBs, zone entry,
-unit toggle, all dashboard analytics/views, gym log. Stubs only for nav routes.
+Activity/wellness sync and schema, training-load handling, PBs, readiness score, zone
+entry, unit toggle, all dashboard analytics/views, gym log. Stubs only for nav routes.
