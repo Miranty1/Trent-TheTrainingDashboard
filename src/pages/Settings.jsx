@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
 import { invokeFn } from '../lib/functions'
+import SyncPanel from '../components/SyncPanel'
 
 export default function Settings() {
   const [status, setStatus] = useState({ loading: true })
@@ -57,6 +58,7 @@ export default function Settings() {
           {error && <p role="alert">{error}</p>}
         </form>
       </section>
+      {status.connected && <SyncPanel />}
     </main>
   )
 }
