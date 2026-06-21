@@ -24,23 +24,24 @@ export default function Overview() {
   const [loading, setLoading] = useState(true)
   const [done, setDone] = useState(false)
 
-  const after = from ? new Date(from).toISOString() : null
-  const beforeBound = to ? new Date(`${to}T23:59:59`).toISOString() : null
-
   useEffect(() => {
     weeklyTotals(startOfWeekIso()).then(setTotals).catch(() => setTotals(null))
   }, [])
 
   useEffect(() => {
+    const after = from ? new Date(from).toISOString() : null
+    const beforeBound = to ? new Date(`${to}T23:59:59`).toISOString() : null
     setLoading(true)
+    setItems([])
     setDone(false)
     listActivities({ types: type ? [type] : null, before: beforeBound, after, limit: PAGE })
       .then((rows) => { setItems(rows); setDone(rows.length < PAGE) })
       .catch(() => setItems([]))
       .finally(() => setLoading(false))
-  }, [type, from, to]) // eslint-disable-line react-hooks/exhaustive-deps
+  }, [type, from, to])
 
   async function loadMore() {
+    const after = from ? new Date(from).toISOString() : null
     const before = items[items.length - 1]?.start_date
     const rows = await listActivities({ types: type ? [type] : null, before, after, limit: PAGE })
     setItems((prev) => [...prev, ...rows])
