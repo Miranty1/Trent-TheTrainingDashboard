@@ -27,6 +27,8 @@ test('Run shows map, charts, and a splits table', async () => {
   await waitFor(() => expect(screen.getByText('Long Run')).toBeInTheDocument())
   await waitFor(() => expect(screen.getByTestId('map')).toBeInTheDocument())
   expect(screen.getByText('chart:Heart rate')).toBeInTheDocument()
+  expect(screen.getByText('chart:Pace')).toBeInTheDocument()
+  expect(screen.getByText('chart:Elevation')).toBeInTheDocument()
   expect(screen.getByRole('table')).toBeInTheDocument()
 })
 

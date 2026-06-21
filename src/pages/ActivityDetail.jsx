@@ -23,7 +23,12 @@ export default function ActivityDetail() {
   }, [id])
 
   useEffect(() => {
-    if (act && FULL.has(act.type)) getStreams(id).then(setStreams).catch(() => setStreams(null))
+    if (!act || !FULL.has(act.type)) return undefined
+    let active = true
+    getStreams(id)
+      .then((d) => { if (active) setStreams(d) })
+      .catch(() => { if (active) setStreams(null) })
+    return () => { active = false }
   }, [act, id])
 
   if (act === undefined) return <main><p>Loading…</p></main>
