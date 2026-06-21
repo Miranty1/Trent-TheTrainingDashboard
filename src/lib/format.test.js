@@ -24,6 +24,6 @@ test('formatElevation: rounded metres', () => {
 })
 
 test('formatDate: short readable date', () => {
-  expect(formatDate('2026-06-20T04:05:47Z')).toMatch(/2026/)
+  expect(formatDate('2026-06-20T04:05:47Z')).toMatch(/Jun \d+, 2026/)
   expect(formatDate(null)).toBe('—')
 })
