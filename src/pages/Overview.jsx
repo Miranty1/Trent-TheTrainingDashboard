@@ -29,15 +29,26 @@ export default function Overview() {
   }, [])
 
   useEffect(() => {
-    const after = from ? new Date(from).toISOString() : null
-    const beforeBound = to ? new Date(`${to}T23:59:59`).toISOString() : null
-    setLoading(true)
-    setItems([])
-    setDone(false)
-    listActivities({ types: type ? [type] : null, before: beforeBound, after, limit: PAGE })
-      .then((rows) => { setItems(rows); setDone(rows.length < PAGE) })
-      .catch(() => setItems([]))
-      .finally(() => setLoading(false))
+    let cancelled = false
+    async function load() {
+      setLoading(true)
+      setItems([])
+      setDone(false)
+      const after = from ? new Date(from).toISOString() : null
+      const beforeBound = to ? new Date(`${to}T23:59:59`).toISOString() : null
+      try {
+        const rows = await listActivities({ types: type ? [type] : null, before: beforeBound, after, limit: PAGE })
+        if (cancelled) return
+        setItems(rows)
+        setDone(rows.length < PAGE)
+      } catch {
+        if (!cancelled) setItems([])
+      } finally {
+        if (!cancelled) setLoading(false)
+      }
+    }
+    load()
+    return () => { cancelled = true }
   }, [type, from, to])
 
   async function loadMore() {
