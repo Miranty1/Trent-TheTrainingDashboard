@@ -5,7 +5,8 @@ import Login from './pages/Login'
 import Settings from './pages/Settings'
 import Overview from './pages/Overview'
 import ActivityDetail from './pages/ActivityDetail'
-import { Trends, Gym } from './pages/stubs'
+import Gym from './pages/Gym'
+import { Trends } from './pages/stubs'
 
 export default function App() {
   return (
