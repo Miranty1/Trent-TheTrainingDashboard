@@ -4,7 +4,8 @@ import NavBar from './components/NavBar'
 import Login from './pages/Login'
 import Settings from './pages/Settings'
 import Overview from './pages/Overview'
-import { ActivityDetail, Trends, Gym } from './pages/stubs'
+import ActivityDetail from './pages/ActivityDetail'
+import { Trends, Gym } from './pages/stubs'
 
 export default function App() {
   return (
