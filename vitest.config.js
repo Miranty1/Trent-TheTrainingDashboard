@@ -8,6 +8,7 @@ export default defineConfig({
     globals: true,
     setupFiles: './src/setupTests.js',
     exclude: ['node_modules', 'dist', '.idea', '.git', '.cache', 'supabase/functions/**/*.test.ts'],
+    restoreMocks: true,
     env: {
       VITE_SUPABASE_URL: 'https://test.supabase.co',
       VITE_SUPABASE_ANON_KEY: 'test-anon-key',
