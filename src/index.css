@@ -1,1 +1,414 @@
-body { margin: 0; }
+/* ─────────────────────────────────────────────────────────────
+   TRENT — Midnight Track Design System
+   Athletic precision. Deep slate. Signal orange.
+   ───────────────────────────────────────────────────────────── */
+
+/* ── Design Tokens ─────────────────────────────────────────── */
+:root {
+  /* Base palette — deep slate with blue undertone, not pure black */
+  --bg:        #080b10;
+  --bg-grid:   #0c1018;
+  --surface:   #111620;
+  --surface-2: #181e2a;
+  --surface-3: #1e2535;
+  --border:    #252d3d;
+  --border-hi: #2e3a50;
+
+  /* Text hierarchy */
+  --text:      #dde3ee;
+  --text-hi:   #eef1f7;
+  --muted:     #7a8aa0;
+  --muted-hi:  #9aafc8;
+
+  /* Signal colors */
+  --accent:    #fc5200;          /* Strava orange — use sparingly */
+  --accent-dim: rgba(252,82,0,.12);
+  --accent-glow: rgba(252,82,0,.25);
+  --green:     #22d67a;
+  --green-dim: rgba(34,214,122,.12);
+
+  /* Geometry */
+  --radius:    10px;
+  --radius-lg: 14px;
+  --gap:       16px;
+
+  /* Shadows */
+  --shadow-card: 0 1px 3px rgba(0,0,0,.5), 0 4px 16px rgba(0,0,0,.35);
+  --shadow-lift: 0 2px 8px rgba(0,0,0,.6), 0 8px 28px rgba(0,0,0,.4);
+
+  /* Typography */
+  --font-ui:      'Barlow', system-ui, sans-serif;
+  --font-display: 'Barlow Condensed', system-ui, sans-serif;
+  --font-mono:    'DM Mono', 'Fira Mono', monospace;
+
+  font-family: var(--font-ui);
+  font-size: 15px;
+  line-height: 1.5;
+}
+
+/* ── Reset & Base ──────────────────────────────────────────── */
+*, *::before, *::after { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--text);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  /* subtle grid texture — no extra dependencies, pure CSS */
+  background-image:
+    linear-gradient(var(--bg-grid) 1px, transparent 1px),
+    linear-gradient(90deg, var(--bg-grid) 1px, transparent 1px);
+  background-size: 40px 40px;
+  background-position: -1px -1px;
+}
+
+main {
+  max-width: 900px;
+  margin: 0 auto;
+  padding: 28px 20px 80px;
+}
+
+a { color: inherit; text-decoration: none; }
+
+h2 {
+  font-family: var(--font-display);
+  font-size: 22px;
+  font-weight: 700;
+  letter-spacing: .02em;
+  text-transform: uppercase;
+  color: var(--text-hi);
+  margin: 0 0 16px;
+}
+
+h4 {
+  font-family: var(--font-display);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: .1em;
+  text-transform: uppercase;
+  color: var(--muted);
+  margin: 0 0 10px;
+}
+
+.meta {
+  color: var(--muted);
+  font-size: 12px;
+  letter-spacing: .01em;
+}
+
+/* ── Navigation ────────────────────────────────────────────── */
+nav {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  padding: 0 20px;
+  background: var(--surface);
+  border-bottom: 1px solid var(--border);
+  position: sticky;
+  top: 0;
+  z-index: 10;
+  /* subtle orange top-line — brand signal */
+  box-shadow:
+    inset 0 2px 0 var(--accent),
+    0 4px 20px rgba(0,0,0,.5);
+}
+
+nav a {
+  display: inline-flex;
+  align-items: center;
+  padding: 14px 14px;
+  border-radius: 0;
+  color: var(--muted);
+  font-family: var(--font-display);
+  font-size: 13px;
+  font-weight: 600;
+  letter-spacing: .06em;
+  text-transform: uppercase;
+  border-bottom: 2px solid transparent;
+  margin-bottom: -1px;
+  transition: color .15s ease, border-color .15s ease;
+}
+
+nav a:hover {
+  color: var(--muted-hi);
+}
+
+nav a.active {
+  color: var(--text-hi);
+  border-bottom-color: var(--accent);
+  background: transparent;
+}
+
+/* ── Metric Row & Cards ────────────────────────────────────── */
+.metric-row {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: var(--gap);
+  margin-bottom: 28px;
+}
+
+.metric-card {
+  position: relative;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  padding: 20px 20px 18px;
+  box-shadow: var(--shadow-card);
+  overflow: hidden;
+  transition: border-color .2s ease, box-shadow .2s ease, transform .2s ease;
+}
+
+.metric-card::before {
+  content: '';
+  position: absolute;
+  top: 0; left: 0; right: 0;
+  height: 2px;
+  background: linear-gradient(90deg, var(--accent) 0%, transparent 70%);
+  opacity: 0;
+  transition: opacity .2s ease;
+}
+
+.metric-card:hover {
+  border-color: var(--border-hi);
+  box-shadow: var(--shadow-lift);
+  transform: translateY(-1px);
+}
+
+.metric-card:hover::before {
+  opacity: 1;
+}
+
+.metric-card .label {
+  font-family: var(--font-display);
+  color: var(--muted);
+  font-size: 10px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: .1em;
+}
+
+.metric-card .value {
+  font-family: var(--font-mono);
+  font-size: 28px;
+  font-weight: 500;
+  margin-top: 8px;
+  color: var(--text-hi);
+  letter-spacing: -.02em;
+  line-height: 1.1;
+}
+
+/* ── Activity Card ─────────────────────────────────────────── */
+.activity-card {
+  display: flex;
+  gap: 16px;
+  align-items: center;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  padding: 16px 20px;
+  margin-bottom: 10px;
+  box-shadow: var(--shadow-card);
+  transition: border-color .18s ease, box-shadow .18s ease, background .18s ease;
+  position: relative;
+  overflow: hidden;
+}
+
+/* left accent stripe — reveals on hover */
+.activity-card::before {
+  content: '';
+  position: absolute;
+  left: 0; top: 0; bottom: 0;
+  width: 3px;
+  background: var(--accent);
+  opacity: 0;
+  transition: opacity .18s ease;
+}
+
+.activity-card:hover {
+  border-color: var(--border-hi);
+  background: var(--surface-2);
+  box-shadow: var(--shadow-lift);
+}
+
+.activity-card:hover::before {
+  opacity: 1;
+}
+
+.activity-card .icon {
+  font-size: 20px;
+  width: 40px;
+  height: 40px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--surface-2);
+  border-radius: 10px;
+  border: 1px solid var(--border);
+  flex-shrink: 0;
+  transition: background .18s ease;
+}
+
+.activity-card:hover .icon {
+  background: var(--surface-3);
+}
+
+.activity-card .body {
+  flex: 1;
+  min-width: 0;
+}
+
+.activity-card .name {
+  font-family: var(--font-ui);
+  font-weight: 600;
+  font-size: 15px;
+  color: var(--text-hi);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.activity-card .stats {
+  display: flex;
+  gap: 20px;
+  font-family: var(--font-mono);
+  font-size: 13px;
+  color: var(--muted-hi);
+  flex-shrink: 0;
+}
+
+.activity-card .stats span {
+  white-space: nowrap;
+}
+
+/* ── Filters ───────────────────────────────────────────────── */
+.filters {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 20px;
+  flex-wrap: wrap;
+  align-items: center;
+}
+
+.filters button {
+  font-family: var(--font-display);
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: .05em;
+  text-transform: uppercase;
+  background: transparent;
+  color: var(--muted);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  padding: 6px 14px;
+  cursor: pointer;
+  transition: color .15s ease, border-color .15s ease, background .15s ease;
+}
+
+.filters button:hover {
+  color: var(--text);
+  border-color: var(--border-hi);
+  background: var(--surface);
+}
+
+.filters button.active {
+  color: var(--accent);
+  border-color: var(--accent);
+  background: var(--accent-dim);
+}
+
+.filters input[type="date"] {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  background: var(--surface);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 6px 10px;
+  outline: none;
+  transition: border-color .15s ease;
+}
+
+.filters input[type="date"]:focus {
+  border-color: var(--accent);
+}
+
+/* ── Load More ─────────────────────────────────────────────── */
+.load-more {
+  display: block;
+  margin: 20px auto 0;
+  background: transparent;
+  color: var(--muted);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 10px 24px;
+  cursor: pointer;
+  font-family: var(--font-display);
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: .06em;
+  text-transform: uppercase;
+  transition: color .15s ease, border-color .15s ease, background .15s ease;
+}
+
+.load-more:hover {
+  color: var(--text);
+  border-color: var(--border-hi);
+  background: var(--surface);
+}
+
+/* ── Splits Table ──────────────────────────────────────────── */
+table.splits {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+  font-family: var(--font-mono);
+}
+
+table.splits th {
+  font-family: var(--font-display);
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: .08em;
+  text-transform: uppercase;
+  color: var(--muted);
+  text-align: left;
+  padding: 10px 8px;
+  border-bottom: 1px solid var(--border);
+}
+
+table.splits td {
+  text-align: left;
+  padding: 10px 8px;
+  border-bottom: 1px solid var(--border);
+  color: var(--text);
+  transition: background .1s ease;
+}
+
+table.splits tr:hover td {
+  background: var(--surface-2);
+}
+
+table.splits tr:last-child td {
+  border-bottom: none;
+}
+
+/* ── Map ───────────────────────────────────────────────────── */
+.map {
+  height: 300px;
+  border-radius: var(--radius-lg);
+  overflow: hidden;
+  margin: 20px 0;
+  border: 1px solid var(--border);
+  box-shadow: var(--shadow-card);
+}
+
+/* ── Chart ─────────────────────────────────────────────────── */
+.chart {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  padding: 16px;
+  margin-bottom: 20px;
+  box-shadow: var(--shadow-card);
+}

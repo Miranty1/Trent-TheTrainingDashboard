@@ -3,7 +3,10 @@ import RequireAuth from './auth/RequireAuth'
 import NavBar from './components/NavBar'
 import Login from './pages/Login'
 import Settings from './pages/Settings'
-import { Overview, ActivityDetail, Trends, Gym } from './pages/stubs'
+import Overview from './pages/Overview'
+import ActivityDetail from './pages/ActivityDetail'
+import Gym from './pages/Gym'
+import { Trends } from './pages/stubs'
 
 export default function App() {
   return (
